@@ -1,0 +1,41 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv
+
+# GCP credentials (asla commit etmeyin!)
+.env.local
+.env.production
+service-account*.json
+*-credentials.json
+
+# Node
+node_modules/
+frontend/.next/
+frontend/out/
+
+# Next.js
+.next/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.ipynb_checkpoints/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data (büyük CSV'ler - isterseniz bu satırı kaldırabilirsiniz)
+# cleaned_data/*.csv
+
+# Cursor
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
