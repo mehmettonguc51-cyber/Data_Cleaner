@@ -1,13 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { StatsCharts } from "@/components/StatsCharts";
 import {
+  getCurrentUser,
   getDownloadUrl,
   getPreview,
   getReport,
   getStats,
   getTables,
+  logout,
   runPipeline,
   uploadFiles,
 } from "@/lib/api";
@@ -15,10 +18,12 @@ import {
 type Source = "bigquery" | "upload";
 
 export default function Dashboard() {
+  const router = useRouter();
+  const [authChecked, setAuthChecked] = useState(false);
   const [source, setSource] = useState<Source>("bigquery");
   const [tables, setTables] = useState<string[]>([]);
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set());
-  const [report, setReport] = useState<{ table: string; rows_before: number; rows_after: number; duplicates_removed: number; status: string }[]>([]);
+  const [report, setReport] = useState<{ table: string; rows_before: number | null; rows_after: number; duplicates_removed: number | null; status: string }[]>([]);
   const [stats, setStats] = useState<{ table: string; rows: number; outlier_count: number; outlier_rate: number }[]>([]);
   const [previewTable, setPreviewTable] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<Record<string, unknown>[]>([]);
@@ -36,17 +41,36 @@ export default function Dashboard() {
       setStats(sRes.tables);
     } catch (e) {
       const msg = String(e);
+      if (msg.includes("Not authenticated") || msg.includes("expired") || msg.includes("Invalid")) {
+        router.push("/login");
+        return;
+      }
       setError(
         msg.includes("Failed to fetch")
           ? "Backend'e bağlanılamadı. Backend çalışıyor mu? (cd backend && uvicorn main:app --reload --port 8000)"
           : msg
       );
     }
-  }, []);
+  }, [router]);
 
   useEffect(() => {
+    getCurrentUser()
+      .then((user) => {
+        if (!user) {
+          router.push("/login");
+          return;
+        }
+        setAuthChecked(true);
+      })
+      .catch(() => {
+        router.push("/login");
+      });
+  }, [router]);
+
+  useEffect(() => {
+    if (!authChecked) return;
     refresh();
-  }, [refresh]);
+  }, [authChecked, refresh]);
 
   useEffect(() => {
     if (previewTable) {
@@ -103,11 +127,38 @@ export default function Dashboard() {
     });
   };
 
+  const handleLogout = async () => {
+    try {
+      await logout();
+      router.push("/login");
+      router.refresh();
+    } catch {
+      router.push("/login");
+    }
+  };
+
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-slate-600">Yükleniyor...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Data Cleaning Pipeline Dashboard</h1>
-        <a href="/settings" className="text-blue-600 hover:underline">Ayarlar</a>
+        <div className="flex gap-4">
+          <a href="/settings" className="text-blue-600 hover:underline">Ayarlar</a>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="text-slate-600 hover:text-slate-800 underline"
+          >
+            Çıkış Yap
+          </button>
+        </div>
       </div>
 
       {/* Veri kaynağı */}

@@ -33,6 +33,9 @@ out/
 # Data (büyük CSV'ler - isterseniz bu satırı kaldırabilirsiniz)
 # cleaned_data/*.csv
 
+# Auth DB (local SQLite - her ortam kendi DB'sini kullanır)
+backend/users.db
+
 # Cursor
 .cursor/
 

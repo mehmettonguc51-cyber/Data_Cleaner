@@ -6,11 +6,16 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy.orm import Session
+from fastapi import Response
 
 from pipeline.cleaner import clean_table
+from auth.models import init_db, get_db, User
+from auth.security import get_current_user, COOKIE_NAME, create_access_token, hash_password, verify_password
+from auth.schemas import UserCreate, UserLogin, UserRead
 
 # Config from env
 PROJECT_ID = os.getenv("PROJECT_ID", "datawarehouseanalytics-480618")
@@ -38,6 +43,47 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def startup():
+    init_db()
+
+
+@app.post("/auth/register", response_model=UserRead)
+def auth_register(data: UserCreate, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.username == data.username).first():
+        raise HTTPException(status_code=400, detail="Bu kullanıcı adı zaten kullanılıyor.")
+    user = User(username=data.username, password_hash=hash_password(data.password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@app.post("/auth/login")
+def auth_login(data: UserLogin, response: Response, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == data.username).first()
+    if not user or not verify_password(data.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Kullanıcı adı veya şifre hatalı.")
+    token = create_access_token(user.username)
+    is_secure = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+    response.set_cookie(
+        key=COOKIE_NAME, value=token, max_age=24 * 3600,
+        httponly=True, secure=is_secure, samesite="lax", path="/",
+    )
+    return {"success": True, "username": user.username}
+
+
+@app.post("/auth/logout")
+def auth_logout(response: Response):
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+    return {"success": True}
+
+
+@app.get("/auth/me", response_model=UserRead)
+def auth_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
 def get_bigquery_client():
     """Lazy BigQuery client - only when needed and credentials available"""
     try:
@@ -54,7 +100,7 @@ def health():
 
 
 @app.post("/api/upload")
-async def upload_files(files: list[UploadFile] = File(...)):
+async def upload_files(files: list[UploadFile] = File(...), _user: User = Depends(get_current_user)):
     """Upload CSV files; returns table names for run"""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -77,7 +123,7 @@ async def upload_files(files: list[UploadFile] = File(...)):
 
 
 @app.post("/api/run")
-async def run_pipeline(source: str = Form("bigquery"), table_names: Optional[str] = Form(None)):
+async def run_pipeline(source: str = Form("bigquery"), table_names: Optional[str] = Form(None), _user: User = Depends(get_current_user)):
     """Run pipeline: source=bigquery or upload; table_names comma-separated (optional)"""
     tables_to_process = [t.strip() for t in (table_names or "").split(",") if t.strip()]
 
@@ -150,7 +196,7 @@ async def run_pipeline(source: str = Form("bigquery"), table_names: Optional[str
 
 
 @app.get("/api/report")
-def get_report():
+def get_report(_user: User = Depends(get_current_user)):
     """Report - reads from cleaned_data folder"""
     reports = []
     for p in OUTPUT_DIR.glob("cleaned_*.csv"):
@@ -169,7 +215,7 @@ def get_report():
 
 
 @app.get("/api/tables")
-def get_tables(source: str = "both"):
+def get_tables(source: str = "both", _user: User = Depends(get_current_user)):
     """Table list: from BigQuery (if available) and/or cleaned_data"""
     tables = set()
     # From cleaned_data
@@ -190,7 +236,7 @@ def get_tables(source: str = "both"):
 
 
 @app.get("/api/preview/{table_name}")
-def preview_table(table_name: str, limit: int = 100):
+def preview_table(table_name: str, limit: int = 100, _user: User = Depends(get_current_user)):
     """Preview first N rows of cleaned table"""
     cleaned_name = f"cleaned_{table_name}"
     csv_path = OUTPUT_DIR / f"{cleaned_name}.csv"
@@ -201,7 +247,7 @@ def preview_table(table_name: str, limit: int = 100):
 
 
 @app.get("/api/download/{table_name}")
-def download_table(table_name: str):
+def download_table(table_name: str, _user: User = Depends(get_current_user)):
     """Download cleaned CSV"""
     cleaned_name = f"cleaned_{table_name}"
     csv_path = OUTPUT_DIR / f"{cleaned_name}.csv"
@@ -211,7 +257,7 @@ def download_table(table_name: str):
 
 
 @app.get("/api/stats")
-def get_stats():
+def get_stats(_user: User = Depends(get_current_user)):
     """Stats for charts: row counts, outlier rates per table"""
     stats = []
     for p in OUTPUT_DIR.glob("cleaned_*.csv"):
